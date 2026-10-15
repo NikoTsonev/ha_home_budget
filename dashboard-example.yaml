@@ -1,0 +1,24 @@
+title: Home Budget
+views:
+  - title: Счетоводство
+    path: home-budget
+    icon: mdi:wallet
+    cards:
+      - type: entities
+        title: Текущ месец
+        show_header_toggle: false
+        entities:
+          - entity: sensor.home_budget_monthly_expenses
+            name: Разходи
+          - entity: sensor.home_budget_monthly_income
+            name: Приходи
+          - entity: sensor.home_budget_monthly_balance
+            name: Баланс
+          - entity: sensor.home_budget_monthly_transactions
+            name: Брой транзакции
+      - type: markdown
+        title: Бързо въвеждане
+        content: |
+          За първата версия добавяй разход чрез **Developer Tools → Actions**,
+          като изпълниш `home_budget.add_transaction`.
+          Формата и Revolut CSV импортът ще бъдат добавени в следващата версия.

@@ -1,0 +1,11 @@
+{
+  "domain": "home_budget",
+  "name": "Home Budget",
+  "version": "0.1.0",
+  "documentation": "https://www.home-assistant.io/",
+  "dependencies": [],
+  "codeowners": [],
+  "config_flow": true,
+  "iot_class": "local_polling",
+  "requirements": []
+}
