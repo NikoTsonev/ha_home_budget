@@ -1,0 +1,77 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Home Budget",
+        "data": {"currency": "Currency (ISO code)"}
+      }
+    },
+    "error": {"invalid_currency": "Enter a valid 3-letter currency code"},
+    "abort": {"already_configured": "Already configured"}
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Home Budget",
+        "menu_options": {
+          "add_transaction": "Add transaction",
+          "import_revolut": "Import Revolut statement",
+          "review_unsorted": "Sort unsorted transactions",
+          "settings": "Settings"
+        }
+      },
+      "import_done": {
+        "title": "Import finished",
+        "description": "Imported {inserted}, duplicates {duplicates}, skipped {skipped}, errors {errors}. Unsorted transactions: {unsorted}.",
+        "menu_options": {
+          "review_unsorted": "Sort unsorted transactions now",
+          "finish": "Done"
+        }
+      },
+      "review_unsorted": {
+        "title": "Sort transactions ({remaining} groups left)",
+        "description": "**{description}** ({kind}) — {count} transaction(s), total {total}.\nPick a category for all of them, or leave empty to skip.",
+        "data": {"category": "Category"}
+      },
+      "add_transaction": {
+        "title": "Add transaction",
+        "description": "{error}",
+        "data": {
+          "kind": "Type",
+          "amount": "Amount",
+          "category": "Category",
+          "date": "Date",
+          "description": "Description",
+          "account": "Account",
+          "currency": "Currency"
+        }
+      },
+      "import_revolut": {
+        "title": "Import Revolut statement",
+        "description": "Upload a Revolut statement (CSV or XLSX). Categories are assigned automatically; unrecognised ones go to \"Unsorted\". Already imported rows are skipped. {details}",
+        "data": {
+          "file": "Statement file",
+          "skip_transfers": "Skip top-ups and transfers"
+        }
+      },
+      "settings": {
+        "title": "Settings",
+        "data": {"currency": "Currency (ISO code)", "categories": "Categories (type to add, ✕ to remove)"}
+      }
+    },
+    "error": {
+      "no_categories": "Add at least one category",
+      "invalid_currency": "Enter a valid 3-letter currency code",
+      "invalid_transaction": "Invalid transaction data",
+      "invalid_csv": "Could not read the CSV file"
+    },
+    "abort": {
+      "transaction_added": "Transaction added.",
+      "import_done": "Imported {inserted}, duplicates {duplicates}, skipped {skipped}, errors {errors}. Unsorted: {unsorted}.",
+      "review_done": "No unsorted transactions left."
+    }
+  },
+  "selector": {
+    "kind": {"options": {"expense": "Expense", "income": "Income"}}
+  }
+}

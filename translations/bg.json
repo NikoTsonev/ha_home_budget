@@ -1,0 +1,77 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Домашен бюджет",
+        "data": {"currency": "Валута (ISO код)"}
+      }
+    },
+    "error": {"invalid_currency": "Въведете валиден 3-буквен код на валута"},
+    "abort": {"already_configured": "Вече е конфигурирано"}
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Домашен бюджет",
+        "menu_options": {
+          "add_transaction": "Добави транзакция",
+          "import_revolut": "Импорт от Revolut извлечение",
+          "review_unsorted": "Разпредели некатегоризирани",
+          "settings": "Настройки"
+        }
+      },
+      "import_done": {
+        "title": "Импортът приключи",
+        "description": "Импортирани {inserted}, дубликати {duplicates}, пропуснати {skipped}, грешки {errors}. Некатегоризирани: {unsorted}.",
+        "menu_options": {
+          "review_unsorted": "Разпредели некатегоризираните сега",
+          "finish": "Готово"
+        }
+      },
+      "review_unsorted": {
+        "title": "Разпределяне ({remaining} групи остават)",
+        "description": "**{description}** ({kind}) — {count} транзакция(и), общо {total}.\nИзберете категория за всички или оставете празно за пропускане.",
+        "data": {"category": "Категория"}
+      },
+      "add_transaction": {
+        "title": "Добави транзакция",
+        "description": "{error}",
+        "data": {
+          "kind": "Тип",
+          "amount": "Сума",
+          "category": "Категория",
+          "date": "Дата",
+          "description": "Описание",
+          "account": "Сметка",
+          "currency": "Валута"
+        }
+      },
+      "import_revolut": {
+        "title": "Импорт от Revolut извлечение",
+        "description": "Качете извлечение от Revolut (CSV или XLSX). Категориите се определят автоматично; неразпознатите отиват в \"Unsorted\". Вече импортираните редове се пропускат. {details}",
+        "data": {
+          "file": "Файл с извлечение",
+          "skip_transfers": "Пропусни зареждания и преводи"
+        }
+      },
+      "settings": {
+        "title": "Настройки",
+        "data": {"currency": "Валута (ISO код)", "categories": "Категории (пишете за добавяне, ✕ за премахване)"}
+      }
+    },
+    "error": {
+      "no_categories": "Добавете поне една категория",
+      "invalid_currency": "Въведете валиден 3-буквен код на валута",
+      "invalid_transaction": "Невалидни данни за транзакцията",
+      "invalid_csv": "CSV файлът не може да бъде прочетен"
+    },
+    "abort": {
+      "transaction_added": "Транзакцията е добавена.",
+      "import_done": "Импортирани {inserted}, дубликати {duplicates}, пропуснати {skipped}, грешки {errors}. Некатегоризирани: {unsorted}.",
+      "review_done": "Няма повече некатегоризирани транзакции."
+    }
+  },
+  "selector": {
+    "kind": {"options": {"expense": "Разход", "income": "Приход"}}
+  }
+}

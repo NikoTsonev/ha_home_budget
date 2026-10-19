@@ -8,7 +8,9 @@ from .const import (
     ATTR_EXTERNAL_ID, ATTR_KIND, ATTR_TRANSACTION_ID, CONF_CURRENCY, DEFAULT_CURRENCY,
     DOMAIN, PLATFORMS, SERVICE_ADD_TRANSACTION, SERVICE_DELETE_TRANSACTION, SERVICE_REFRESH,
 )
+from .panel import async_register_panel, async_unregister_panel
 from .storage import BudgetStore
+from .websocket import async_register_websocket_api
 
 ADD_SCHEMA = vol.Schema({
     vol.Required(ATTR_AMOUNT): vol.Coerce(float),
@@ -27,7 +29,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     currency = entry.options.get(CONF_CURRENCY, entry.data.get(CONF_CURRENCY, DEFAULT_CURRENCY))
     store = BudgetStore(hass)
     await store.async_setup()
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {"store": store, "currency": currency}
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
+        "store": store, "currency": currency, "entry": entry,
+    }
 
     async def refresh_entities():
         coordinator = hass.data[DOMAIN][entry.entry_id].get("coordinator")
@@ -68,10 +72,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.services.async_register(DOMAIN, SERVICE_REFRESH, refresh_entities)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    async_register_websocket_api(hass)
+    await async_register_panel(hass)
+    entry.async_on_unload(entry.add_update_listener(_async_options_updated))
     return True
+
+async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    await hass.config_entries.async_reload(entry.entry_id)
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    if unload_ok:
+        async_unregister_panel(hass)
     for service in (SERVICE_ADD_TRANSACTION, SERVICE_DELETE_TRANSACTION, SERVICE_REFRESH):
         if hass.services.has_service(DOMAIN, service):
             hass.services.async_remove(DOMAIN, service)
