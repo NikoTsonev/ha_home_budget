@@ -1,4 +1,5 @@
 import asyncio
+import calendar
 import hashlib
 import json
 import os
@@ -343,6 +344,115 @@ class BudgetStore:
             return cur.rowcount > 0
         finally:
             con.close()
+
+    async def async_stats(self, currency, year, month=0, exclude_transfers=False):
+        async with self._lock:
+            return await self.hass.async_add_executor_job(
+                self._stats, currency, int(year), int(month), bool(exclude_transfers)
+            )
+
+    def _stats(self, currency, year, month, exclude_transfers):
+        # Top-ups move own money onto the account, so they are never income.
+        excluded = ["Top-up"] + (["Transfers in", "Transfers out"] if exclude_transfers else [])
+        marks = ",".join("?" * len(excluded))
+        base = f"currency=? AND category NOT IN ({marks})"
+        base_params = [currency, *excluded]
+        today = date.today()
+        year_prefix = f"{year:04d}"
+        period_prefix = f"{year:04d}-{month:02d}" if month else year_prefix
+
+        def totals(con, prefix):
+            rows = con.execute(
+                f"""SELECT kind, COALESCE(SUM(CAST(amount AS REAL)),0) AS total, COUNT(*) AS n
+                FROM transactions WHERE {base} AND substr(transaction_date,1,?)=?
+                GROUP BY kind""", base_params + [len(prefix), prefix]
+            ).fetchall()
+            result = {"expense": 0.0, "income": 0.0, "count": 0}
+            for row in rows:
+                result[row["kind"]] = round(float(row["total"]), 2)
+                result["count"] += row["n"]
+            result["balance"] = round(result["income"] - result["expense"], 2)
+            return result
+
+        con = _connect(self.path)
+        try:
+            monthly = []
+            for m in range(1, 13):
+                t = totals(con, f"{year:04d}-{m:02d}")
+                monthly.append({"month": m, "income": t["income"], "expense": t["expense"]})
+
+            year_totals = totals(con, year_prefix)
+            period_totals = totals(con, period_prefix)
+            if month:
+                prev_prefix = f"{year - 1:04d}-12" if month == 1 else f"{year:04d}-{month - 1:02d}"
+            else:
+                prev_prefix = f"{year - 1:04d}"
+            previous = totals(con, prev_prefix)
+
+            expense_where = f"{base} AND kind='expense' AND substr(transaction_date,1,?)=?"
+            expense_params = base_params + [len(period_prefix), period_prefix]
+            categories = [dict(r) for r in con.execute(
+                f"""SELECT category, ROUND(SUM(CAST(amount AS REAL)),2) AS total, COUNT(*) AS n
+                FROM transactions WHERE {expense_where}
+                GROUP BY category ORDER BY total DESC""", expense_params
+            ).fetchall()]
+            merchants = [dict(r) for r in con.execute(
+                f"""SELECT description, ROUND(SUM(CAST(amount AS REAL)),2) AS total, COUNT(*) AS n
+                FROM transactions WHERE {expense_where} AND description != ''
+                GROUP BY description ORDER BY total DESC LIMIT 10""", expense_params
+            ).fetchall()]
+            largest = [dict(r) for r in con.execute(
+                f"""SELECT id, transaction_date, description, category, amount, currency
+                FROM transactions WHERE {expense_where}
+                ORDER BY CAST(amount AS REAL) DESC LIMIT 5""", expense_params
+            ).fetchall()]
+            weekdays = [0.0] * 7
+            for r in con.execute(
+                f"""SELECT strftime('%w', transaction_date) AS d, SUM(CAST(amount AS REAL)) AS total
+                FROM transactions WHERE {expense_where} GROUP BY d""", expense_params
+            ).fetchall():
+                if r["d"] is not None:
+                    weekdays[(int(r["d"]) + 6) % 7] = round(float(r["total"]), 2)  # Monday first
+
+            unsorted = con.execute(
+                """SELECT COUNT(*) AS n, COALESCE(SUM(CAST(amount AS REAL)),0) AS total
+                FROM transactions WHERE category=?""", (UNSORTED,)
+            ).fetchone()
+            years = [r["y"] for r in con.execute(
+                "SELECT DISTINCT substr(transaction_date,1,4) AS y FROM transactions ORDER BY y DESC"
+            ).fetchall()]
+        finally:
+            con.close()
+
+        if month:
+            days_in_period = calendar.monthrange(year, month)[1]
+            is_current = (year, month) == (today.year, today.month)
+            days_elapsed = today.day if is_current else days_in_period
+        else:
+            days_in_period = 366 if calendar.isleap(year) else 365
+            is_current = year == today.year
+            days_elapsed = today.timetuple().tm_yday if is_current else days_in_period
+        average_daily = round(period_totals["expense"] / days_elapsed, 2) if days_elapsed else 0.0
+        projected = round(average_daily * days_in_period, 2) if is_current else None
+
+        months_elapsed = today.month if year == today.year else 12
+        income = period_totals["income"]
+        return {
+            "currency": currency, "year": year, "month": month, "years": years,
+            "year_totals": {
+                **year_totals,
+                "avg_monthly_expense": round(year_totals["expense"] / months_elapsed, 2),
+                "avg_monthly_income": round(year_totals["income"] / months_elapsed, 2),
+            },
+            "period": {
+                **period_totals, "previous": previous, "average_daily": average_daily,
+                "projected_expense": projected, "is_current": is_current,
+                "savings_rate": round(period_totals["balance"] / income * 100, 1) if income > 0 else None,
+            },
+            "monthly": monthly, "categories": categories, "merchants": merchants,
+            "largest": largest, "weekdays": weekdays,
+            "unsorted": {"count": unsorted["n"], "total": round(float(unsorted["total"]), 2)},
+        }
 
     async def async_summary(self, currency):
         async with self._lock:

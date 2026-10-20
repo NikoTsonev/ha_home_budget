@@ -3,6 +3,9 @@ const esc = (value) =>
     { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
   ));
 
+const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August",
+  "September", "October", "November", "December"];
+
 const STYLE = `
   :host { display: block; height: 100%; overflow: auto; background: var(--primary-background-color);
     color: var(--primary-text-color); font-family: var(--paper-font-body1_-_font-family, sans-serif); }
@@ -43,6 +46,35 @@ const STYLE = `
   label { display: grid; gap: 4px; font-size: 13px; color: var(--secondary-text-color); }
   label.check { display: flex; align-items: center; gap: 8px; }
   .row { display: flex; justify-content: flex-end; gap: 8px; }
+  .tabs { display: flex; gap: 4px; padding: 0 16px; background: var(--app-header-background-color, var(--primary-color));
+    position: sticky; top: 56px; z-index: 2; }
+  .tab { background: transparent; border: 0; border-bottom: 3px solid transparent; border-radius: 0;
+    color: var(--app-header-text-color, #fff); opacity: .75; padding: 10px 16px; }
+  .tab.active { opacity: 1; border-bottom-color: currentColor; }
+  .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); margin-bottom: 16px; }
+  .kpi { background: var(--card-background-color); border: 1px solid var(--divider-color); border-radius: 8px; padding: 12px 14px; }
+  .kpi .label { font-size: 12px; color: var(--secondary-text-color); text-transform: uppercase; letter-spacing: .4px; }
+  .kpi .value { font-size: 22px; margin: 4px 0; }
+  .kpi .sub { font-size: 12px; color: var(--secondary-text-color); }
+  .good { color: var(--success-color, #43a047); }
+  .bad { color: var(--error-color, #db4437); }
+  .panels { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); margin-bottom: 16px; }
+  .panel { background: var(--card-background-color); border: 1px solid var(--divider-color); border-radius: 8px; padding: 14px; min-width: 0; }
+  .panel h3 { margin: 0 0 10px; font-size: 15px; font-weight: 500; }
+  .bars .line { display: grid; grid-template-columns: minmax(90px, 30%) 1fr auto; gap: 8px; align-items: center;
+    padding: 4px 0; font-size: 13px; cursor: pointer; }
+  .bars .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bars .track { height: 10px; border-radius: 5px; background: var(--secondary-background-color); overflow: hidden; }
+  .bars .fill { height: 100%; background: var(--primary-color); border-radius: 5px; }
+  .bars .amt { white-space: nowrap; text-align: right; color: var(--secondary-text-color); }
+  .chart text { fill: var(--secondary-text-color); font-size: 11px; }
+  .chart .col { cursor: pointer; }
+  .chart .col:hover rect.hit { fill: var(--secondary-background-color); }
+  .alert { padding: 10px 14px; border-radius: 8px; margin-bottom: 16px; background: var(--warning-color, #ffa726); color: #000;
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .alert span { flex: 1; }
+  .fab { position: fixed; right: 20px; bottom: 20px; width: 56px; height: 56px; border-radius: 50%; font-size: 28px;
+    line-height: 1; padding: 0; box-shadow: 0 3px 8px rgba(0,0,0,.35); z-index: 3; }
   @media (max-width: 870px) { .menu { display: block; } }
 `;
 
@@ -96,7 +128,23 @@ class HomeBudgetPanel extends HTMLElement {
         <button id="add" class="primary">+ Add</button>
         <input type="file" id="file" accept=".csv,.xlsx" hidden>
       </div>
-      <div class="wrap">
+      <div class="tabs">
+        <button class="tab active" data-tab="dash">Overview</button>
+        <button class="tab" data-tab="tx">Transactions</button>
+      </div>
+      <div class="wrap" style="padding-bottom:0"><div id="status" class="status" hidden></div></div>
+      <div class="wrap" id="dashView">
+        <div class="filters">
+          <select id="dYear"></select>
+          <select id="dMonth"></select>
+          <label class="check"><input type="checkbox" id="dTransfers"> Exclude transfers</label>
+          <span style="flex:1"></span>
+          <button id="addDash" class="primary">+ Add transaction</button>
+        </div>
+        <div id="dash"><div class="empty">Loading…</div></div>
+      </div>
+      <button id="fab" class="fab primary" title="Add transaction">+</button>
+      <div class="wrap" id="txView" hidden>
         <div class="filters">
           <input type="month" id="month" value="${this._month}">
           <select id="category"></select>
@@ -108,7 +156,6 @@ class HomeBudgetPanel extends HTMLElement {
           <input type="search" id="search" placeholder="Search description / account" style="flex:1;min-width:180px">
           <button id="clear">Clear filters</button>
         </div>
-        <div id="status" class="status" hidden></div>
         <div class="summary" id="summary"></div>
         <div class="card"><table>
           <thead><tr><th>Date</th><th>Description</th><th>Category</th><th>Account</th><th class="num">Amount</th><th></th></tr></thead>
@@ -176,6 +223,148 @@ class HomeBudgetPanel extends HTMLElement {
       else this._delete(item);
     });
     this._fillCategorySelects();
+
+    const now = new Date();
+    this._dash = { year: now.getFullYear(), month: now.getMonth() + 1, mode: "month", exclude: false, data: null };
+    const years = new Set([now.getFullYear()]);
+    $("dYear").innerHTML = [...years].map((y) => `<option value="${y}">${y}</option>`).join("");
+    $("dMonth").innerHTML = `<option value="0">Whole year</option>` +
+      MONTHS.map((m, i) => `<option value="${i + 1}">${m}</option>`).join("");
+    $("dMonth").value = String(this._dash.month);
+    $("dYear").addEventListener("change", () => { this._dash.year = Number($("dYear").value); this._loadStats(); });
+    $("dMonth").addEventListener("change", () => { this._dash.month = Number($("dMonth").value); this._loadStats(); });
+    $("dTransfers").addEventListener("change", () => { this._dash.exclude = $("dTransfers").checked; this._loadStats(); });
+    $("addDash").addEventListener("click", () => this._openDialog(null));
+    $("fab").addEventListener("click", () => this._openDialog(null));
+    for (const tab of this.shadowRoot.querySelectorAll(".tab")) {
+      tab.addEventListener("click", () => this._showTab(tab.dataset.tab));
+    }
+    $("dash").addEventListener("click", (e) => {
+      const el = e.target.closest("[data-cat],[data-m],[data-unsorted]");
+      if (!el) return;
+      if (el.dataset.m) {
+        this._dash.month = Number(el.dataset.m);
+        $("dMonth").value = el.dataset.m;
+        this._loadStats();
+      } else {
+        const cat = el.dataset.unsorted ? "Unsorted" : el.dataset.cat;
+        const { year, month } = this._dash;
+        $("month").value = month ? `${year}-${String(month).padStart(2, "0")}` : "";
+        $("category").value = cat;
+        $("kind").value = "";
+        $("search").value = "";
+        this._showTab("tx");
+        this._load(true);
+      }
+    });
+    this._loadStats();
+  }
+
+  _showTab(name) {
+    const $ = (id) => this.shadowRoot.getElementById(id);
+    for (const tab of this.shadowRoot.querySelectorAll(".tab")) tab.classList.toggle("active", tab.dataset.tab === name);
+    $("dashView").hidden = name !== "dash";
+    $("txView").hidden = name !== "tx";
+  }
+
+  async _loadStats() {
+    const $ = (id) => this.shadowRoot.getElementById(id);
+    if (!$("dash")) return;
+    try {
+      const d = await this._ws({
+        type: "home_budget/stats", year: this._dash.year, month: this._dash.month,
+        exclude_transfers: this._dash.exclude,
+      });
+      this._dash.data = d;
+      const years = new Set([...d.years.map(Number).filter(Boolean), new Date().getFullYear(), d.year]);
+      $("dYear").innerHTML = [...years].sort((a, b) => b - a)
+        .map((y) => `<option value="${y}">${y}</option>`).join("");
+      $("dYear").value = String(d.year);
+      $("dash").innerHTML = this._dashHtml(d);
+    } catch (err) {
+      this._status(err.message || "Failed to load statistics", true);
+    }
+  }
+
+  _dashHtml(d) {
+    const cur = esc(d.currency);
+    const fmt = (v) => `${Number(v || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${cur}`;
+    const p = d.period, y = d.year_totals;
+    const label = d.month ? `${MONTHS[d.month - 1]} ${d.year}` : String(d.year);
+    const delta = (now, before, goodWhenDown) => {
+      if (!before) return "";
+      const pct = ((now - before) / before) * 100;
+      const good = goodWhenDown ? pct <= 0 : pct >= 0;
+      return `<span class="${good ? "good" : "bad"}">${pct >= 0 ? "▲" : "▼"} ${Math.abs(pct).toFixed(0)}%</span> vs previous`;
+    };
+    const kpi = (name, value, sub, cls = "") =>
+      `<div class="kpi"><div class="label">${name}</div><div class="value ${cls}">${value}</div><div class="sub">${sub || "&nbsp;"}</div></div>`;
+
+    const kpis = [
+      kpi(`Expenses · ${label}`, fmt(p.expense), delta(p.expense, p.previous.expense, true), "expense"),
+      kpi(`Income · ${label}`, fmt(p.income), delta(p.income, p.previous.income, false), "income"),
+      kpi("Balance", fmt(p.balance), p.savings_rate === null ? "" : `Savings rate ${p.savings_rate}%`,
+        p.balance >= 0 ? "income" : "expense"),
+      kpi("Average per day", fmt(p.average_daily),
+        p.projected_expense === null ? `${p.count} transactions` : `Projected: ${fmt(p.projected_expense)}`),
+      kpi(`Year to date · ${d.year}`, fmt(y.balance), `Spent ${fmt(y.expense)}`, y.balance >= 0 ? "income" : "expense"),
+      kpi("Avg monthly expense", fmt(y.avg_monthly_expense), `Avg income ${fmt(y.avg_monthly_income)}`),
+    ].join("");
+
+    const alert = d.unsorted.count
+      ? `<div class="alert"><span><b>${d.unsorted.count}</b> unsorted transactions (${fmt(d.unsorted.total)}) need a category.</span>
+          <button data-unsorted="1">Review</button></div>` : "";
+
+    const max = Math.max(1, ...d.monthly.flatMap((m) => [m.income, m.expense]));
+    const W = 600, H = 200, base = 175, slot = W / 12, bw = 12;
+    const cols = d.monthly.map((m, i) => {
+      const x = i * slot + slot / 2;
+      const he = (m.expense / max) * (base - 10), hi = (m.income / max) * (base - 10);
+      const sel = d.month === m.month ? ` fill-opacity=".12"` : ` fill-opacity="0"`;
+      return `<g class="col" data-m="${m.month}">
+        <title>${MONTHS[i]}: income ${fmt(m.income)}, expenses ${fmt(m.expense)}</title>
+        <rect class="hit" x="${i * slot}" y="0" width="${slot}" height="${H}" fill="currentColor"${sel}/>
+        <rect x="${x - bw - 1}" y="${base - hi}" width="${bw}" height="${hi}" fill="var(--success-color, #43a047)" rx="2"/>
+        <rect x="${x + 1}" y="${base - he}" width="${bw}" height="${he}" fill="var(--error-color, #db4437)" rx="2"/>
+        <text x="${x}" y="${H - 6}" text-anchor="middle">${MONTHS[i].slice(0, 3)}</text></g>`;
+    }).join("");
+    const chart = `<svg class="chart" viewBox="0 0 ${W} ${H}" width="100%" role="img">${cols}</svg>
+      <div class="sub" style="font-size:12px;color:var(--secondary-text-color)">
+        <span class="income">■</span> Income &nbsp; <span class="expense">■</span> Expenses · click a month</div>`;
+
+    const totalCat = d.categories.reduce((s, c) => s + c.total, 0) || 1;
+    const catBars = d.categories.length ? d.categories.slice(0, 12).map((c) => `
+      <div class="line" data-cat="${esc(c.category)}" title="${c.n} transactions">
+        <span class="name">${esc(c.category)}</span>
+        <span class="track"><span class="fill" style="display:block;width:${(c.total / d.categories[0].total) * 100}%"></span></span>
+        <span class="amt">${fmt(c.total)} · ${((c.total / totalCat) * 100).toFixed(0)}%</span></div>`).join("")
+      : `<div class="empty">No expenses in this period.</div>`;
+
+    const merchants = d.merchants.length ? d.merchants.slice(0, 8).map((m) => `
+      <div class="line" style="cursor:default"><span class="name" title="${esc(m.description)}">${esc(m.description)}</span>
+        <span></span><span class="amt">${fmt(m.total)} · ${m.n}×</span></div>`).join("")
+      : `<div class="empty">No data.</div>`;
+
+    const largest = d.largest.length ? d.largest.map((t) => `
+      <div class="line" style="cursor:default"><span class="name" title="${esc(t.description)}">${esc(t.description)}</span>
+        <span class="amt" style="text-align:left">${esc(String(t.transaction_date).slice(0, 10))}</span>
+        <span class="amt">${fmt(t.amount)}</span></div>`).join("")
+      : `<div class="empty">No data.</div>`;
+
+    const dayMax = Math.max(1, ...d.weekdays);
+    const days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((n, i) => `
+      <div class="line" style="cursor:default"><span class="name">${n}</span>
+        <span class="track"><span class="fill" style="display:block;width:${(d.weekdays[i] / dayMax) * 100}%"></span></span>
+        <span class="amt">${fmt(d.weekdays[i])}</span></div>`).join("");
+
+    return `${alert}<div class="grid">${kpis}</div>
+      <div class="panels">
+        <div class="panel"><h3>Income vs expenses · ${d.year}</h3>${chart}</div>
+        <div class="panel bars"><h3>Expenses by category · ${label}</h3>${catBars}</div>
+        <div class="panel bars"><h3>Top merchants · ${label}</h3>${merchants}</div>
+        <div class="panel bars"><h3>Largest expenses · ${label}</h3>${largest}</div>
+        <div class="panel bars"><h3>Spending by weekday · ${label}</h3>${days}</div>
+      </div>`;
   }
 
   _allCategories() {
@@ -211,6 +400,7 @@ class HomeBudgetPanel extends HTMLElement {
       this._state.income = res.income;
       this._fillCategorySelects();
       this._renderRows();
+      if (reset) this._loadStats();
     } catch (err) {
       this._status(err.message || "Failed to load transactions", true);
     }

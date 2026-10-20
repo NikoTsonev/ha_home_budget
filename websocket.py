@@ -84,6 +84,22 @@ async def ws_list(hass, connection, msg, ctx):
     connection.send_result(msg["id"], result)
 
 
+@websocket_api.websocket_command({
+    vol.Required("type"): "home_budget/stats",
+    vol.Required("year"): vol.All(int, vol.Range(min=1970, max=2200)),
+    vol.Optional("month", default=0): vol.All(int, vol.Range(min=0, max=12)),
+    vol.Optional("exclude_transfers", default=False): bool,
+})
+@websocket_api.require_admin
+@websocket_api.async_response
+@_with_context
+async def ws_stats(hass, connection, msg, ctx):
+    result = await ctx["store"].async_stats(
+        ctx["currency"], msg["year"], msg["month"], msg["exclude_transfers"]
+    )
+    connection.send_result(msg["id"], result)
+
+
 @websocket_api.websocket_command({vol.Required("type"): "home_budget/add", **TX_FIELDS})
 @websocket_api.require_admin
 @websocket_api.async_response
@@ -217,6 +233,6 @@ async def ws_import(hass, connection, msg, ctx):
 
 
 def async_register_websocket_api(hass: HomeAssistant):
-    for command in (ws_info, ws_list, ws_add, ws_update, ws_delete, ws_recategorize, ws_import,
+    for command in (ws_info, ws_stats, ws_list, ws_add, ws_update, ws_delete, ws_recategorize, ws_import,
                     ws_rules, ws_add_rule, ws_delete_rule):
         websocket_api.async_register_command(hass, command)
