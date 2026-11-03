@@ -6,12 +6,7 @@ PLATFORMS = ["sensor"]
 CONF_CURRENCY = "currency"
 DEFAULT_CURRENCY = "EUR"
 CONF_CATEGORIES = "categories"
-DEFAULT_CATEGORIES = [
-    "Groceries", "Eating out", "Transport", "Fuel", "Tolls & vignettes", "Utilities & bills",
-    "Subscriptions", "Shopping", "Home & DIY", "Sports & fitness", "Personal care", "Pets",
-    "Shipping", "Health", "Entertainment", "Travel", "Loans & installments", "Cash", "Fees",
-    "Housing", "Income", "Refunds", "Top-up", "Transfers in", "Transfers out", UNSORTED,
-]
+DEFAULT_CATEGORIES = [UNSORTED]
 
 SERVICE_ADD_TRANSACTION = "add_transaction"
 SERVICE_DELETE_TRANSACTION = "delete_transaction"
