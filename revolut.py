@@ -1,4 +1,5 @@
 """Parser for Revolut statement exports (CSV and XLSX)."""
+
 import csv
 import hashlib
 import io
@@ -6,9 +7,11 @@ import re
 import zipfile
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
-from xml.etree import ElementTree
+from xml.etree import ElementTree4
+from config_flow import HomeBudgetOptionsFlow
 
 from .categorizer import categorise
+
 # EXCHANGE moves money between own pockets, so it is never real income/expense.
 ALWAYS_SKIPPED_TYPES = {"EXCHANGE"}
 TRANSFER_TYPES = {"TOPUP", "TRANSFER"}
@@ -17,13 +20,19 @@ NUM_TAG = "\x00num:"
 _ALIASES = {
     "type": ("type",),
     "product": ("product",),
-    "date": ("completed date", "date completed (utc)", "started date", "date started (utc)"),
+    "date": (
+        "completed date",
+        "date completed (utc)",
+        "started date",
+        "date started (utc)",
+    ),
     "description": ("description",),
     "amount": ("amount",),
     "fee": ("fee",),
     "currency": ("currency",),
     "state": ("state",),
     "balance": ("balance",),
+    "category": ("category",),
 }
 
 
@@ -46,7 +55,9 @@ def _read_xlsx(content):
         if "xl/sharedStrings.xml" in zf.namelist():
             root = ElementTree.fromstring(zf.read("xl/sharedStrings.xml"))
             for si in root:
-                shared.append("".join(t.text or "" for t in si.iter() if _local(t.tag) == "t"))
+                shared.append(
+                    "".join(t.text or "" for t in si.iter() if _local(t.tag) == "t")
+                )
         sheets = sorted(
             n for n in zf.namelist() if re.fullmatch(r"xl/worksheets/sheet\d+\.xml", n)
         )
@@ -128,7 +139,7 @@ def _decimal(value):
 def _iso_date(value):
     value = (value or "").strip()
     if value.startswith(NUM_TAG):
-        serial = float(value[len(NUM_TAG):])
+        serial = float(value[len(NUM_TAG) :])
         return (date(1899, 12, 30) + timedelta(days=int(serial))).isoformat()
     match = re.match(r"(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})", value)
     if match:
@@ -140,11 +151,17 @@ def _iso_date(value):
 
 def parse_revolut(content, skip_transfers=False, user_rules=()):
     """Return (transactions, skipped, errors) parsed from a Revolut CSV/XLSX export (bytes)."""
-    rows, fieldnames = _read_xlsx(content) if content[:2] == b"PK" else _read_csv(content)
+    rows, fieldnames = (
+        _read_xlsx(content) if content[:2] == b"PK" else _read_csv(content)
+    )
     lowered = {name.strip().lower(): name for name in fieldnames if name}
-    cols = {k: [lowered[n] for n in names if n in lowered] for k, names in _ALIASES.items()}
+    cols = {
+        k: [lowered[n] for n in names if n in lowered] for k, names in _ALIASES.items()
+    }
     if not cols["amount"] or not cols["currency"] or not cols["date"]:
-        raise ValueError("Not a Revolut statement: missing Amount, Currency or Date columns")
+        raise ValueError(
+            "Not a Revolut statement: missing Amount, Currency or Date columns"
+        )
 
     def get(row, key):
         for col in cols[key]:
@@ -162,7 +179,9 @@ def parse_revolut(content, skip_transfers=False, user_rules=()):
             continue
         tx_type = _plain(get(row, "type"))
         norm_type = re.sub(r"[\s_\-]", "", tx_type.upper())
-        if norm_type in ALWAYS_SKIPPED_TYPES or (skip_transfers and norm_type in TRANSFER_TYPES):
+        if norm_type in ALWAYS_SKIPPED_TYPES or (
+            skip_transfers and norm_type in TRANSFER_TYPES
+        ):
             skipped += 1
             continue
         try:
@@ -178,22 +197,41 @@ def parse_revolut(content, skip_transfers=False, user_rules=()):
         kind = "income" if total > 0 else "expense"
         description = _plain(get(row, "description"))
         raw = "|".join(
-            _plain(get(row, k)) for k in
-            ("date", "type", "description", "amount", "fee", "currency", "balance", "product")
+            _plain(get(row, k))
+            for k in (
+                "date",
+                "type",
+                "description",
+                "amount",
+                "fee",
+                "currency",
+                "balance",
+                "product",
+            )
         )
         # Identical rows within one file stay distinct; re-importing yields the same ids.
         seen[raw] = seen.get(raw, 0) + 1
-        external_id = "revolut|" + hashlib.sha256(f"{raw}|{seen[raw]}".encode()).hexdigest()
-        transactions.append({
-            "amount": abs(total),
-            "currency": _plain(get(row, "currency")),
-            "kind": kind,
-            # "category": categorise(description, tx_type, kind, user_rules),
-            "category": get(row, "category"),
-            "tx_date": _iso_date(get(row, "date")),
-            "description": description,
-            "account": f"Revolut {_plain(get(row, 'product'))}".strip(),
-            "source": "revolut",
-            "external_id": external_id,
-        })
+        external_id = (
+            "revolut|" + hashlib.sha256(f"{raw}|{seen[raw]}".encode()).hexdigest()
+        )
+        categories = HomeBudgetOptionsFlow._categories()
+        file_category = _plain(get(row, "category"))
+        if file_category and file_category in categories:
+            category = file_category
+        else:
+            category = categorise(description, tx_type, kind, user_rules)
+        transactions.append(
+            {
+                "amount": abs(total),
+                "currency": _plain(get(row, "currency")),
+                "kind": kind,
+                # "category": _plain(get(row, "category")) or categorise(description, tx_type, kind, user_rules),
+                "category": category,
+                "tx_date": _iso_date(get(row, "date")),
+                "description": description,
+                "account": f"Revolut {_plain(get(row, 'product'))}".strip(),
+                "source": "revolut",
+                "external_id": external_id,
+            }
+        )
     return transactions, skipped, errors

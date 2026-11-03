@@ -204,13 +204,31 @@ class BudgetStore:
             con.close()
 
     async def async_import(self, transactions):
-        """Insert many transactions; invalid ones are reported, duplicates ignored."""
+        """Insert many transactions; invalid ones are reported, duplicates ignored.
+
+        Besides the external_id hash, rows already stored (even if edited or recategorised, or
+        exported again with different number/date formatting) are matched by date, amount,
+        currency and kind, so a re-import never creates a second copy.
+        """
         inserted = duplicates = 0
         errors = []
+        async with self._lock:
+            existing = await self.hass.async_add_executor_job(self._import_counts)
+        seen = {}
         for index, tx in enumerate(transactions, start=1):
             try:
+                content_key = None
+                if tx.get("source") == "revolut":
+                    content_key = (
+                        str(tx["tx_date"])[:10], f"{Decimal(str(tx['amount'])):.2f}",
+                        str(tx["currency"]).upper(), tx["kind"],
+                    )
+                    seen[content_key] = seen.get(content_key, 0) + 1
+                    if seen[content_key] <= existing.get(content_key, 0):
+                        duplicates += 1
+                        continue
                 result = await self.async_add(**tx)
-            except ValueError as err:
+            except (ValueError, InvalidOperation) as err:
                 errors.append(f"#{index}: {err}")
                 continue
             if result["inserted"]:
@@ -218,6 +236,22 @@ class BudgetStore:
             else:
                 duplicates += 1
         return {"inserted": inserted, "duplicates": duplicates, "errors": errors}
+
+    def _import_counts(self):
+        con = _connect(self.path)
+        try:
+            counts = {}
+            for r in con.execute(
+                "SELECT substr(transaction_date,1,10) AS d, amount, currency, kind FROM transactions WHERE source='revolut'"
+            ).fetchall():
+                try:
+                    key = (r["d"], f"{Decimal(r['amount']):.2f}", str(r["currency"]).upper(), r["kind"])
+                except InvalidOperation:
+                    continue
+                counts[key] = counts.get(key, 0) + 1
+            return counts
+        finally:
+            con.close()
 
     def _insert(self, tx_date, amount, currency, kind, category, description, account, source, external_id, key):
         con = _connect(self.path)
