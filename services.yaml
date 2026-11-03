@@ -1,0 +1,61 @@
+add_transaction:
+  fields:
+    amount:
+      required: true
+      example: 12.50
+      selector:
+        number:
+          min: 0.01
+          step: any
+          mode: box
+    kind:
+      required: true
+      example: expense
+      selector:
+        select:
+          options:
+            - expense
+            - income
+    category:
+      required: true
+      example: Groceries
+      selector:
+        text:
+    date:
+      required: false
+      example: "2026-01-31"
+      selector:
+        text:
+    description:
+      required: false
+      selector:
+        text:
+    account:
+      required: false
+      selector:
+        text:
+    currency:
+      required: false
+      example: EUR
+      selector:
+        text:
+    source:
+      required: false
+      selector:
+        text:
+    external_id:
+      required: false
+      selector:
+        text:
+
+delete_transaction:
+  fields:
+    transaction_id:
+      required: true
+      example: 1
+      selector:
+        number:
+          min: 1
+          mode: box
+
+refresh:
