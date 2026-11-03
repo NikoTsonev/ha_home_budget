@@ -213,18 +213,13 @@ def parse_revolut(content, skip_transfers=False, user_rules=()):
         external_id = (
             "revolut|" + hashlib.sha256(f"{raw}|{seen[raw]}".encode()).hexdigest()
         )
-        categories = HomeBudgetOptionsFlow._categories()
         file_category = _plain(get(row, "category"))
-        if file_category and file_category in categories:
-            category = file_category
-        else:
-            category = categorise(description, tx_type, kind, user_rules)
+        category = file_category or categorise(description, tx_type, kind, user_rules)
         transactions.append(
             {
                 "amount": abs(total),
                 "currency": _plain(get(row, "currency")),
                 "kind": kind,
-                # "category": _plain(get(row, "category")) or categorise(description, tx_type, kind, user_rules),
                 "category": category,
                 "tx_date": _iso_date(get(row, "date")),
                 "description": description,
