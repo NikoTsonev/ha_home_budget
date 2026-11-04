@@ -33,6 +33,9 @@ CREATE INDEX IF NOT EXISTS idx_transactions_category ON transactions(category);
 CREATE TABLE IF NOT EXISTS category_rules (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     pattern TEXT NOT NULL UNIQUE,
+    category TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS recurring (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     kind TEXT NOT NULL,
