@@ -33,7 +33,20 @@ CREATE INDEX IF NOT EXISTS idx_transactions_category ON transactions(category);
 CREATE TABLE IF NOT EXISTS category_rules (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     pattern TEXT NOT NULL UNIQUE,
+CREATE TABLE IF NOT EXISTS recurring (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind TEXT NOT NULL,
+    amount TEXT NOT NULL,
+    currency TEXT NOT NULL,
     category TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    account TEXT NOT NULL DEFAULT '',
+    day_of_month INTEGER NOT NULL,
+    start_date TEXT NOT NULL,
+    end_date TEXT,
+    active INTEGER NOT NULL DEFAULT 1,
+    last_month TEXT NOT NULL DEFAULT '',
+    created_by TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL
 );
 """
@@ -393,6 +406,159 @@ class BudgetStore:
             cur = con.execute(sql, params)
             con.commit()
             return cur.rowcount > 0
+        finally:
+            con.close()
+
+    async def async_recurring_list(self):
+        async with self._lock:
+            return await self.hass.async_add_executor_job(self._recurring_list)
+
+    def _recurring_list(self):
+        today = date.today()
+        con = _connect(self.path)
+        try:
+            items = []
+            for r in con.execute("SELECT * FROM recurring ORDER BY active DESC, day_of_month, id").fetchall():
+                item = dict(r)
+                item["generated"] = con.execute(
+                    "SELECT COUNT(*) AS n FROM transactions WHERE source='recurring' AND external_id LIKE ?",
+                    (f"recurring|{r['id']}|%",),
+                ).fetchone()["n"]
+                item["next_date"] = self._next_occurrence(r, today)
+                items.append(item)
+            return items
+        finally:
+            con.close()
+
+    @staticmethod
+    def _next_occurrence(rec, today):
+        if not rec["active"]:
+            return None
+        start = date.fromisoformat(rec["start_date"])
+        end = date.fromisoformat(rec["end_date"]) if rec["end_date"] else None
+        last = rec["last_month"]
+        if last:
+            y, m = int(last[:4]), int(last[5:7]) + 1
+        else:
+            y, m = start.year, start.month
+        if m > 12:
+            y, m = y + 1, 1
+        occ = date(y, m, min(rec["day_of_month"], calendar.monthrange(y, m)[1]))
+        if end and occ > end:
+            return None
+        return occ.isoformat()
+
+    async def async_recurring_save(self, recurring_id, *, amount, currency, kind, category, day_of_month,
+                                   start_date, end_date=None, description="", account="", active=True,
+                                   created_by="", backfill=True):
+        money, start_date, currency, kind, category, description, account = _clean_fields(
+            amount, currency, kind, category, start_date, description, account
+        )
+        day = int(day_of_month)
+        if not 1 <= day <= 31:
+            raise ValueError("day of month must be between 1 and 31")
+        end_date = _normalise_date(end_date) if end_date else None
+        if end_date and end_date < start_date:
+            raise ValueError("end date must not be before the start date")
+        last_month = ""
+        if not backfill and not recurring_id:
+            # Past occurrences are skipped: processing starts from the first due date not yet passed.
+            floor = max(date.fromisoformat(start_date), date.today())
+            y, m = floor.year, floor.month
+            while date(y, m, min(day, calendar.monthrange(y, m)[1])) < floor:
+                y, m = (y + 1, 1) if m == 12 else (y, m + 1)
+            py, pm = (y - 1, 12) if m == 1 else (y, m - 1)
+            last_month = f"{py:04d}-{pm:02d}"
+        async with self._lock:
+            return await self.hass.async_add_executor_job(
+                self._recurring_save, recurring_id, str(money), currency, kind, category, day,
+                start_date, end_date, description, account, 1 if active else 0, created_by, last_month
+            )
+
+    def _recurring_save(self, recurring_id, amount, currency, kind, category, day, start_date, end_date,
+                        description, account, active, created_by, last_month=""):
+        con = _connect(self.path)
+        try:
+            if recurring_id:
+                cur = con.execute(
+                    """UPDATE recurring SET kind=?, amount=?, currency=?, category=?, description=?,
+                    account=?, day_of_month=?, start_date=?, end_date=?, active=? WHERE id=?""",
+                    (kind, amount, currency, category, description, account, day, start_date, end_date,
+                     active, int(recurring_id)),
+                )
+                con.commit()
+                return cur.rowcount > 0
+            con.execute(
+                """INSERT INTO recurring (kind,amount,currency,category,description,account,day_of_month,
+                start_date,end_date,active,created_by,created_at,last_month) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (kind, amount, currency, category, description, account, day, start_date, end_date,
+                 active, created_by, datetime.now().isoformat(timespec="seconds"), last_month),
+            )
+            con.commit()
+            return True
+        finally:
+            con.close()
+
+    async def async_recurring_delete(self, recurring_id):
+        async with self._lock:
+            return await self.hass.async_add_executor_job(self._recurring_delete, int(recurring_id))
+
+    def _recurring_delete(self, recurring_id):
+        con = _connect(self.path)
+        try:
+            cur = con.execute("DELETE FROM recurring WHERE id=?", (recurring_id,))
+            con.commit()
+            return cur.rowcount > 0
+        finally:
+            con.close()
+
+    async def async_process_recurring(self, today=None):
+        """Create every due occurrence of the active recurring transactions; returns the count."""
+        async with self._lock:
+            return await self.hass.async_add_executor_job(
+                self._process_recurring, today or date.today()
+            )
+
+    def _process_recurring(self, today):
+        con = _connect(self.path)
+        created = 0
+        try:
+            for rec in con.execute("SELECT * FROM recurring WHERE active=1").fetchall():
+                start = date.fromisoformat(rec["start_date"])
+                end = date.fromisoformat(rec["end_date"]) if rec["end_date"] else None
+                last = rec["last_month"]
+                if last:
+                    y, m = int(last[:4]), int(last[5:7]) + 1
+                else:
+                    y, m = start.year, start.month
+                last_done = last
+                while True:
+                    if m > 12:
+                        y, m = y + 1, 1
+                    occ = date(y, m, min(rec["day_of_month"], calendar.monthrange(y, m)[1]))
+                    if occ > today or (end and occ > end):
+                        break
+                    month_key = f"{y:04d}-{m:02d}"
+                    if occ >= start:
+                        external_id = f"recurring|{rec['id']}|{month_key}"
+                        key = _dedupe_key(rec["kind"], occ.isoformat(), rec["amount"], rec["currency"],
+                                          rec["category"], rec["description"], rec["account"], external_id)
+                        cur = con.execute(
+                            """INSERT OR IGNORE INTO transactions
+                            (transaction_date,amount,currency,kind,category,description,account,source,
+                             external_id,dedupe_key,created_at,created_by,created_by_id)
+                            VALUES (?,?,?,?,?,?,?,'recurring',?,?,?,?,'')""",
+                            (occ.isoformat(), rec["amount"], rec["currency"], rec["kind"], rec["category"],
+                             rec["description"], rec["account"], external_id, key,
+                             datetime.now().isoformat(timespec="seconds"), "Recurring"),
+                        )
+                        created += cur.rowcount
+                    last_done = month_key
+                    m += 1
+                if last_done != last:
+                    con.execute("UPDATE recurring SET last_month=? WHERE id=?", (last_done, rec["id"]))
+            con.commit()
+            return created
         finally:
             con.close()
 

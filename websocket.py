@@ -232,7 +232,63 @@ async def ws_import(hass, connection, msg, ctx):
     })
 
 
+@websocket_api.websocket_command({vol.Required("type"): "home_budget/recurring"})
+@websocket_api.async_response
+@_with_context
+async def ws_recurring(hass, connection, msg, ctx):
+    connection.send_result(msg["id"], {"items": await ctx["store"].async_recurring_list()})
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): "home_budget/recurring_save",
+    vol.Optional("recurring_id"): vol.Any(int, None),
+    vol.Required("amount"): vol.Coerce(float),
+    vol.Required("kind"): vol.In(KINDS),
+    vol.Required("category"): str,
+    vol.Required("day_of_month"): vol.All(int, vol.Range(min=1, max=31)),
+    vol.Required("start_date"): str,
+    vol.Optional("end_date", default=""): vol.Any(str, None),
+    vol.Optional("description", default=""): str,
+    vol.Optional("account", default=""): str,
+    vol.Optional("currency"): str,
+    vol.Optional("active", default=True): bool,
+    vol.Optional("backfill", default=True): bool,
+})
+@websocket_api.require_admin
+@websocket_api.async_response
+@_with_context
+async def ws_recurring_save(hass, connection, msg, ctx):
+    ok = await ctx["store"].async_recurring_save(
+        msg.get("recurring_id"), amount=msg["amount"], kind=msg["kind"], category=msg["category"],
+        currency=msg.get("currency") or ctx["currency"], day_of_month=msg["day_of_month"],
+        start_date=msg["start_date"], end_date=msg.get("end_date") or None,
+        description=msg["description"], account=msg["account"], active=msg["active"],
+        created_by=connection.user.name or "", backfill=msg["backfill"],
+    )
+    if not ok:
+        connection.send_error(msg["id"], "not_found", "Recurring transaction not found")
+        return
+    created = await ctx["store"].async_process_recurring()
+    await _refresh(ctx)
+    connection.send_result(msg["id"], {"created": created})
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): "home_budget/recurring_delete",
+    vol.Required("recurring_id"): int,
+})
+@websocket_api.require_admin
+@websocket_api.async_response
+@_with_context
+async def ws_recurring_delete(hass, connection, msg, ctx):
+    if not await ctx["store"].async_recurring_delete(msg["recurring_id"]):
+        connection.send_error(msg["id"], "not_found", "Recurring transaction not found")
+        return
+    connection.send_result(msg["id"], {"deleted": True})
+
+
 def async_register_websocket_api(hass: HomeAssistant):
     for command in (ws_info, ws_stats, ws_list, ws_add, ws_update, ws_delete, ws_recategorize, ws_import,
-                    ws_rules, ws_add_rule, ws_delete_rule):
+                    ws_rules, ws_add_rule, ws_delete_rule, ws_recurring, ws_recurring_save,
+                    ws_recurring_delete):
         websocket_api.async_register_command(hass, command)

@@ -135,8 +135,38 @@ class HomeBudgetPanel extends HTMLElement {
       <div class="tabs">
         <button class="tab active" data-tab="dash">Overview</button>
         <button class="tab" data-tab="tx">Transactions</button>
+        <button class="tab" data-tab="rec">Recurring</button>
       </div>
       <div class="wrap" style="padding-bottom:0"><div id="status" class="status" hidden></div></div>
+      <div class="wrap" id="recView" hidden>
+        <div class="filters">
+          <span style="flex:1;color:var(--secondary-text-color);font-size:13px">
+            Transactions that are created automatically every month on the chosen day, until the end date.</span>
+          <button id="recAdd" class="primary">+ New recurring</button>
+        </div>
+        <div class="card"><table>
+          <thead><tr><th>Description</th><th>Category</th><th>Day</th><th>Period</th><th>Next</th><th>Created</th><th class="num">Amount</th><th></th></tr></thead>
+          <tbody id="recRows"></tbody>
+        </table></div>
+      </div>
+      <dialog id="recDialog"><form method="dialog" id="recForm">
+        <h2 id="recTitle">Recurring transaction</h2>
+        <label>Type<select name="kind"><option value="expense">Expense</option><option value="income">Income</option></select></label>
+        <label>Amount<input name="amount" type="number" step="0.01" min="0.01" required></label>
+        <label>Day of month<input name="day_of_month" type="number" min="1" max="31" required></label>
+        <label>Start date<input name="start_date" type="date" required></label>
+        <label>End date (optional)<input name="end_date" type="date"></label>
+        <label>Category<input name="category" list="cats" required autocomplete="off"></label>
+        <label>Description<input name="description" placeholder="e.g. Loan installment"></label>
+        <label>Account<input name="account"></label>
+        <label>Currency<input name="currency" maxlength="3"></label>
+        <label class="check"><input type="checkbox" name="active" checked><span>Active</span></label>
+        <label class="check" id="backfillWrap"><input type="checkbox" name="backfill" checked>
+          <span>Add past installments (from the start date up to today)</span></label>
+        <div style="color:var(--secondary-text-color);font-size:13px">
+          Days after the end of a shorter month use its last day.</div>
+        <div class="row"><button type="button" id="recCancel">Cancel</button><button class="primary" type="submit">Save</button></div>
+      </form></dialog>
       <div class="wrap" id="dashView">
         <div class="filters">
           <select id="dYear"></select>
@@ -238,6 +268,17 @@ class HomeBudgetPanel extends HTMLElement {
     $("dYear").addEventListener("change", () => { this._dash.year = Number($("dYear").value); this._loadStats(); });
     $("dMonth").addEventListener("change", () => { this._dash.month = Number($("dMonth").value); this._loadStats(); });
     $("dTransfers").addEventListener("change", () => { this._dash.exclude = $("dTransfers").checked; this._loadStats(); });
+    $("recAdd").addEventListener("click", () => this._openRecurring(null));
+    $("recCancel").addEventListener("click", () => $("recDialog").close());
+    $("recForm").addEventListener("submit", (e) => { e.preventDefault(); this._saveRecurring(); });
+    $("recRows").addEventListener("click", (e) => {
+      const btn = e.target.closest("button[data-ract]");
+      if (!btn) return;
+      const item = (this._recurring || []).find((r) => r.id === Number(btn.dataset.id));
+      if (!item) return;
+      if (btn.dataset.ract === "edit") this._openRecurring(item);
+      else this._deleteRecurring(item);
+    });
     $("addDash").addEventListener("click", () => this._openDialog(null));
     $("fab").addEventListener("click", () => this._openDialog(null));
     for (const tab of this.shadowRoot.querySelectorAll(".tab")) {
@@ -269,6 +310,85 @@ class HomeBudgetPanel extends HTMLElement {
     for (const tab of this.shadowRoot.querySelectorAll(".tab")) tab.classList.toggle("active", tab.dataset.tab === name);
     $("dashView").hidden = name !== "dash";
     $("txView").hidden = name !== "tx";
+    $("recView").hidden = name !== "rec";
+    $("fab").hidden = name === "rec";
+    if (name === "rec") this._loadRecurring();
+  }
+
+  async _loadRecurring() {
+    try {
+      const res = await this._ws({ type: "home_budget/recurring" });
+      this._recurring = res.items;
+      const admin = this._state.isAdmin;
+      this.shadowRoot.getElementById("recAdd").hidden = !admin;
+      const cur = this._state.currency;
+      this.shadowRoot.getElementById("recRows").innerHTML = res.items.length ? res.items.map((r) => {
+        const sign = r.kind === "income" ? "+" : "−";
+        const period = `${esc(r.start_date)} → ${esc(r.end_date || "no end")}`;
+        const next = !r.active ? "paused" : (r.next_date ? esc(r.next_date) : "finished");
+        return `<tr>
+          <td>${esc(r.description || "—")}</td>
+          <td><span class="tag">${esc(r.category)}</span></td>
+          <td>${r.day_of_month}</td><td>${period}</td><td>${next}</td><td>${r.generated}×</td>
+          <td class="num ${r.kind}">${sign}${esc(r.amount)} ${esc(r.currency || cur)}</td>
+          <td class="actions">${admin ? `
+            <button class="icon" data-ract="edit" data-id="${r.id}" title="Edit">✎</button>
+            <button class="icon danger" data-ract="delete" data-id="${r.id}" title="Delete">🗑</button>` : ""}</td></tr>`;
+      }).join("") : `<tr><td colspan="8" class="empty">No recurring transactions</td></tr>`;
+    } catch (err) {
+      this._status(err.message || "Failed to load recurring transactions", true);
+    }
+  }
+
+  _openRecurring(item) {
+    this._recEditing = item;
+    const form = this.shadowRoot.getElementById("recForm");
+    form.kind.value = item ? item.kind : "expense";
+    form.amount.value = item ? item.amount : "";
+    form.day_of_month.value = item ? item.day_of_month : new Date().getDate();
+    form.start_date.value = item ? item.start_date : new Date().toISOString().slice(0, 10);
+    form.end_date.value = item ? item.end_date || "" : "";
+    form.category.value = item ? item.category : "";
+    form.description.value = item ? item.description : "";
+    form.account.value = item ? item.account : "";
+    form.currency.value = item ? item.currency : this._state.currency;
+    form.active.checked = item ? !!item.active : true;
+    form.backfill.checked = true;
+    this.shadowRoot.getElementById("backfillWrap").hidden = !!item;
+    this.shadowRoot.getElementById("recTitle").textContent = item ? "Edit recurring transaction" : "New recurring transaction";
+    this.shadowRoot.getElementById("recDialog").showModal();
+  }
+
+  async _saveRecurring() {
+    const form = this.shadowRoot.getElementById("recForm");
+    const payload = {
+      type: "home_budget/recurring_save", recurring_id: this._recEditing ? this._recEditing.id : null,
+      kind: form.kind.value, amount: Number(form.amount.value), day_of_month: Number(form.day_of_month.value),
+      start_date: form.start_date.value, end_date: form.end_date.value || "",
+      category: form.category.value.trim(), description: form.description.value,
+      account: form.account.value, currency: form.currency.value.trim() || this._state.currency,
+      active: form.active.checked, backfill: form.backfill.checked,
+    };
+    try {
+      const res = await this._ws(payload);
+      this.shadowRoot.getElementById("recDialog").close();
+      this._status(res.created ? `${res.created} transaction(s) created.` : "");
+      this._loadRecurring();
+      this._load(true);
+    } catch (err) {
+      this._status(err.message || "Save failed", true);
+    }
+  }
+
+  async _deleteRecurring(item) {
+    if (!confirm(`Delete recurring "${item.description || item.category}"? Already created transactions are kept.`)) return;
+    try {
+      await this._ws({ type: "home_budget/recurring_delete", recurring_id: item.id });
+      this._status("");
+    } catch (err) {
+      this._status(err.message || "Delete failed", true);
+    }
+    this._loadRecurring();
   }
 
   async _loadStats() {

@@ -2,6 +2,7 @@ import voluptuous as vol
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.event import async_track_time_change
 
 from .const import (
     ATTR_ACCOUNT, ATTR_AMOUNT, ATTR_CATEGORY, ATTR_DATE, ATTR_DESCRIPTION,
@@ -78,6 +79,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     async_register_websocket_api(hass)
     await async_register_panel(hass)
+
+    async def process_recurring(_now=None):
+        if await store.async_process_recurring():
+            await refresh_entities()
+
+    await process_recurring()
+    entry.async_on_unload(async_track_time_change(hass, process_recurring, hour=0, minute=10, second=0))
     entry.async_on_unload(entry.add_update_listener(_async_options_updated))
     return True
 
