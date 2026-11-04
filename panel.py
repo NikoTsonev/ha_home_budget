@@ -29,7 +29,7 @@ async def async_register_panel(hass: HomeAssistant):
         module_url=f"{STATIC_URL}/home-budget-panel.js?v={version}",
         sidebar_title="Home Budget",
         sidebar_icon="mdi:wallet",
-        require_admin=True,
+        require_admin=False,
     )
 
 

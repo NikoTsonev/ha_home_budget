@@ -40,8 +40,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     async def add_transaction(call: ServiceCall):
         data = call.data
+        user_id = call.context.user_id or ""
+        user = await hass.auth.async_get_user(user_id) if user_id else None
         try:
             result = await store.async_add(
+                created_by=(user.name if user else "") or "",
+                created_by_id=user_id,
                 amount=data[ATTR_AMOUNT],
                 currency=data.get("currency", currency),
                 kind=data[ATTR_KIND],

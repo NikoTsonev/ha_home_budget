@@ -60,6 +60,11 @@ def _connect(path):
     con.execute("PRAGMA journal_mode=WAL")
     con.execute("PRAGMA foreign_keys=ON")
     con.executescript(SCHEMA)
+    columns = {r["name"] for r in con.execute("PRAGMA table_info(transactions)")}
+    for column in ("created_by", "created_by_id"):
+        if column not in columns:
+            con.execute(f"ALTER TABLE transactions ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
+    con.commit()
     return con
 
 def _money(value):
@@ -116,7 +121,8 @@ class BudgetStore:
         con.close()
 
     async def async_add(self, *, amount, currency, kind, category, tx_date=None,
-                        description="", account="", source="manual", external_id=None):
+                        description="", account="", source="manual", external_id=None,
+                        created_by="", created_by_id=""):
         money, tx_date, currency, kind, category, description, account = _clean_fields(
             amount, currency, kind, category, tx_date, description, account
         )
@@ -125,28 +131,31 @@ class BudgetStore:
         async with self._lock:
             return await self.hass.async_add_executor_job(
                 self._insert, tx_date, str(money), currency, kind, category,
-                description, account, source, external_id, key
+                description, account, source, external_id, key, created_by, created_by_id
             )
 
     async def async_update(self, transaction_id, *, amount, currency, kind, category, tx_date,
-                           description="", account=""):
+                           description="", account="", owner_id=None):
         money, tx_date, currency, kind, category, description, account = _clean_fields(
             amount, currency, kind, category, tx_date, description, account
         )
         async with self._lock:
             return await self.hass.async_add_executor_job(
                 self._update, int(transaction_id), tx_date, str(money), currency, kind,
-                category, description, account
+                category, description, account, owner_id
             )
 
-    def _update(self, transaction_id, tx_date, amount, currency, kind, category, description, account):
+    def _update(self, transaction_id, tx_date, amount, currency, kind, category, description, account,
+                owner_id=None):
         con = _connect(self.path)
         try:
-            cur = con.execute(
-                """UPDATE transactions SET transaction_date=?, amount=?, currency=?, kind=?,
-                category=?, description=?, account=? WHERE id=?""",
-                (tx_date, amount, currency, kind, category, description, account, transaction_id),
-            )
+            sql = """UPDATE transactions SET transaction_date=?, amount=?, currency=?, kind=?,
+                category=?, description=?, account=? WHERE id=?"""
+            params = [tx_date, amount, currency, kind, category, description, account, transaction_id]
+            if owner_id is not None:
+                sql += " AND created_by_id=?"
+                params.append(owner_id)
+            cur = con.execute(sql, params)
             con.commit()
             return cur.rowcount > 0
         finally:
@@ -184,7 +193,8 @@ class BudgetStore:
                 GROUP BY kind""", params + [currency]
             ).fetchall()
             rows = con.execute(
-                f"""SELECT id,transaction_date,amount,currency,kind,category,description,account,source
+                f"""SELECT id,transaction_date,amount,currency,kind,category,description,account,source,
+                created_by,created_by_id
                 FROM transactions {clause}
                 ORDER BY transaction_date DESC,id DESC LIMIT ? OFFSET ?""",
                 params + [limit, offset],
@@ -203,7 +213,7 @@ class BudgetStore:
         finally:
             con.close()
 
-    async def async_import(self, transactions):
+    async def async_import(self, transactions, created_by="", created_by_id=""):
         """Insert many transactions; invalid ones are reported, duplicates ignored.
 
         Besides the external_id hash, rows already stored (even if edited or recategorised, or
@@ -227,7 +237,7 @@ class BudgetStore:
                     if seen[content_key] <= existing.get(content_key, 0):
                         duplicates += 1
                         continue
-                result = await self.async_add(**tx)
+                result = await self.async_add(**tx, created_by=created_by, created_by_id=created_by_id)
             except (ValueError, InvalidOperation) as err:
                 errors.append(f"#{index}: {err}")
                 continue
@@ -253,14 +263,17 @@ class BudgetStore:
         finally:
             con.close()
 
-    def _insert(self, tx_date, amount, currency, kind, category, description, account, source, external_id, key):
+    def _insert(self, tx_date, amount, currency, kind, category, description, account, source, external_id, key,
+                created_by="", created_by_id=""):
         con = _connect(self.path)
         try:
             cur = con.execute(
                 """INSERT OR IGNORE INTO transactions
-                (transaction_date,amount,currency,kind,category,description,account,source,external_id,dedupe_key,created_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
-                (tx_date, amount, currency, kind, category, description, account, source, external_id, key, datetime.now().isoformat(timespec="seconds"))
+                (transaction_date,amount,currency,kind,category,description,account,source,external_id,dedupe_key,created_at,
+                 created_by,created_by_id)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (tx_date, amount, currency, kind, category, description, account, source, external_id, key,
+                 datetime.now().isoformat(timespec="seconds"), created_by, created_by_id)
             )
             con.commit()
             if cur.rowcount == 0:
@@ -366,14 +379,18 @@ class BudgetStore:
         finally:
             con.close()
 
-    async def async_delete(self, transaction_id):
+    async def async_delete(self, transaction_id, owner_id=None):
         async with self._lock:
-            return await self.hass.async_add_executor_job(self._delete, int(transaction_id))
+            return await self.hass.async_add_executor_job(self._delete, int(transaction_id), owner_id)
 
-    def _delete(self, transaction_id):
+    def _delete(self, transaction_id, owner_id=None):
         con = _connect(self.path)
         try:
-            cur = con.execute("DELETE FROM transactions WHERE id=?", (transaction_id,))
+            sql, params = "DELETE FROM transactions WHERE id=?", [transaction_id]
+            if owner_id is not None:
+                sql += " AND created_by_id=?"
+                params.append(owner_id)
+            cur = con.execute(sql, params)
             con.commit()
             return cur.rowcount > 0
         finally:

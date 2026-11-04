@@ -100,7 +100,11 @@ class HomeBudgetPanel extends HTMLElement {
     this._render();
     try {
       const info = await this._ws({ type: "home_budget/info" });
-      Object.assign(this._state, { categories: info.categories, currency: info.currency, unsorted: info.unsorted });
+      Object.assign(this._state, {
+        categories: info.categories, currency: info.currency, unsorted: info.unsorted,
+        isAdmin: info.is_admin, userId: info.user_id,
+      });
+      for (const id of ["rules", "import"]) this.shadowRoot.getElementById(id).hidden = !info.is_admin;
       this._fillCategorySelects();
     } catch (err) {
       this._status(err.message || "Failed to load", true);
@@ -158,7 +162,7 @@ class HomeBudgetPanel extends HTMLElement {
         </div>
         <div class="summary" id="summary"></div>
         <div class="card"><table>
-          <thead><tr><th>Date</th><th>Description</th><th>Category</th><th>Account</th><th class="num">Amount</th><th></th></tr></thead>
+          <thead><tr><th>Date</th><th>Description</th><th>Category</th><th>Account</th><th>Added by</th><th class="num">Amount</th><th></th></tr></thead>
           <tbody id="rows"></tbody>
         </table></div>
         <div class="row" style="margin-top:12px"><button id="more" hidden>Show more</button></div>
@@ -416,7 +420,7 @@ class HomeBudgetPanel extends HTMLElement {
       `<span>Balance: ${fmt((s.income || 0) - (s.expenses || 0))}</span>`;
     const rows = this.shadowRoot.getElementById("rows");
     if (!s.items.length) {
-      rows.innerHTML = `<tr><td colspan="6" class="empty">No transactions</td></tr>`;
+      rows.innerHTML = `<tr><td colspan="7" class="empty">No transactions</td></tr>`;
     } else {
       rows.innerHTML = s.items.map((i) => {
         const sign = i.kind === "income" ? "+" : "−";
@@ -426,10 +430,11 @@ class HomeBudgetPanel extends HTMLElement {
           <td>${esc(i.description)}</td>
           <td><span class="tag${unsorted}">${esc(i.category)}</span></td>
           <td>${esc(i.account)}</td>
+          <td>${esc(i.created_by || "—")}</td>
           <td class="num ${i.kind}">${sign}${esc(i.amount)} ${esc(i.currency)}</td>
-          <td class="actions">
+          <td class="actions">${s.isAdmin || (i.created_by_id && i.created_by_id === s.userId) ? `
             <button class="icon" data-act="edit" data-id="${i.id}" title="Edit">✎</button>
-            <button class="icon danger" data-act="delete" data-id="${i.id}" title="Delete">🗑</button>
+            <button class="icon danger" data-act="delete" data-id="${i.id}" title="Delete">🗑</button>` : ""}
           </td></tr>`;
       }).join("");
     }
@@ -447,8 +452,8 @@ class HomeBudgetPanel extends HTMLElement {
     form.description.value = item ? item.description : "";
     form.account.value = item ? item.account : "";
     form.currency.value = item ? item.currency : this._state.currency;
-    form.apply_same.checked = !!item && item.category === this._state.unsorted;
-    this.shadowRoot.getElementById("applyWrap").hidden = !item;
+    form.apply_same.checked = !!item && item.category === this._state.unsorted && this._state.isAdmin;
+    this.shadowRoot.getElementById("applyWrap").hidden = !item || !this._state.isAdmin;
     this.shadowRoot.getElementById("dtitle").textContent = item ? "Edit transaction" : "Add transaction";
     this.shadowRoot.getElementById("dialog").showModal();
   }

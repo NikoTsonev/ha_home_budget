@@ -54,12 +54,13 @@ def _with_context(func):
 
 
 @websocket_api.websocket_command({vol.Required("type"): "home_budget/info"})
-@websocket_api.require_admin
 @websocket_api.async_response
 @_with_context
 async def ws_info(hass, connection, msg, ctx):
     connection.send_result(msg["id"], {
         "currency": ctx["currency"], "categories": _categories(ctx), "unsorted": UNSORTED,
+        "is_admin": connection.user.is_admin, "user_id": connection.user.id,
+        "user_name": connection.user.name,
     })
 
 
@@ -72,7 +73,6 @@ async def ws_info(hass, connection, msg, ctx):
     vol.Optional("limit", default=100): vol.All(int, vol.Range(min=1, max=500)),
     vol.Optional("offset", default=0): vol.All(int, vol.Range(min=0)),
 })
-@websocket_api.require_admin
 @websocket_api.async_response
 @_with_context
 async def ws_list(hass, connection, msg, ctx):
@@ -90,7 +90,6 @@ async def ws_list(hass, connection, msg, ctx):
     vol.Optional("month", default=0): vol.All(int, vol.Range(min=0, max=12)),
     vol.Optional("exclude_transfers", default=False): bool,
 })
-@websocket_api.require_admin
 @websocket_api.async_response
 @_with_context
 async def ws_stats(hass, connection, msg, ctx):
@@ -101,14 +100,14 @@ async def ws_stats(hass, connection, msg, ctx):
 
 
 @websocket_api.websocket_command({vol.Required("type"): "home_budget/add", **TX_FIELDS})
-@websocket_api.require_admin
 @websocket_api.async_response
 @_with_context
 async def ws_add(hass, connection, msg, ctx):
     result = await ctx["store"].async_add(
         amount=msg["amount"], currency=msg.get("currency") or ctx["currency"], kind=msg["kind"],
         category=msg["category"], tx_date=msg["date"], description=msg["description"],
-        account=msg["account"],
+        account=msg["account"], created_by=connection.user.name or "",
+        created_by_id=connection.user.id,
     )
     hass.bus.async_fire(f"{DOMAIN}_transaction_added", result)
     await _refresh(ctx)
@@ -120,17 +119,17 @@ async def ws_add(hass, connection, msg, ctx):
     vol.Required("transaction_id"): int,
     **TX_FIELDS,
 })
-@websocket_api.require_admin
 @websocket_api.async_response
 @_with_context
 async def ws_update(hass, connection, msg, ctx):
+    owner = None if connection.user.is_admin else connection.user.id
     updated = await ctx["store"].async_update(
         msg["transaction_id"], amount=msg["amount"], currency=msg.get("currency") or ctx["currency"],
         kind=msg["kind"], category=msg["category"], tx_date=msg["date"],
-        description=msg["description"], account=msg["account"],
+        description=msg["description"], account=msg["account"], owner_id=owner,
     )
     if not updated:
-        connection.send_error(msg["id"], "not_found", "Transaction not found")
+        connection.send_error(msg["id"], "not_found", "Transaction not found or not yours")
         return
     await _refresh(ctx)
     connection.send_result(msg["id"], {"updated": True})
@@ -140,12 +139,12 @@ async def ws_update(hass, connection, msg, ctx):
     vol.Required("type"): "home_budget/delete",
     vol.Required("transaction_id"): int,
 })
-@websocket_api.require_admin
 @websocket_api.async_response
 @_with_context
 async def ws_delete(hass, connection, msg, ctx):
-    if not await ctx["store"].async_delete(msg["transaction_id"]):
-        connection.send_error(msg["id"], "not_found", "Transaction not found")
+    owner = None if connection.user.is_admin else connection.user.id
+    if not await ctx["store"].async_delete(msg["transaction_id"], owner):
+        connection.send_error(msg["id"], "not_found", "Transaction not found or not yours")
         return
     await _refresh(ctx)
     connection.send_result(msg["id"], {"deleted": True})
@@ -171,7 +170,6 @@ async def ws_recategorize(hass, connection, msg, ctx):
 
 
 @websocket_api.websocket_command({vol.Required("type"): "home_budget/rules"})
-@websocket_api.require_admin
 @websocket_api.async_response
 @_with_context
 async def ws_rules(hass, connection, msg, ctx):
@@ -224,7 +222,9 @@ async def ws_import(hass, connection, msg, ctx):
     except (ValueError, zipfile.BadZipFile, ElementTree.ParseError) as err:
         connection.send_error(msg["id"], "invalid_file", str(err))
         return
-    result = await ctx["store"].async_import(transactions)
+    result = await ctx["store"].async_import(
+        transactions, created_by=connection.user.name or "", created_by_id=connection.user.id
+    )
     await _refresh(ctx)
     connection.send_result(msg["id"], {
         "inserted": result["inserted"], "duplicates": result["duplicates"],
