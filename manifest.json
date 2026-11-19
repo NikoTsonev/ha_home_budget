@@ -1,7 +1,7 @@
 {
   "domain": "home_budget",
   "name": "Home Budget",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "documentation": "https://www.home-assistant.io/",
   "dependencies": ["file_upload", "http", "frontend", "panel_custom", "websocket_api"],
   "codeowners": [],
